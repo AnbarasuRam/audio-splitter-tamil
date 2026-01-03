@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
+import { InsertUser, users, sessions, audioChunks, transcripts, InsertSession, InsertAudioChunk, InsertTranscript } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -89,4 +89,98 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-// TODO: add feature queries here as your schema grows.
+// Session management
+export async function createSession(data: InsertSession) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const result = await db.insert(sessions).values(data);
+  return result[0].insertId;
+}
+
+export async function getSessionById(sessionId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const result = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function getSessionsByUserId(userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  return db.select().from(sessions).where(eq(sessions.userId, userId)).orderBy(desc(sessions.createdAt));
+}
+
+export async function updateSessionStatus(sessionId: number, status: "uploading" | "splitting" | "transcribing" | "completed" | "failed", errorMessage?: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.update(sessions)
+    .set({ status, errorMessage: errorMessage || null, updatedAt: new Date() })
+    .where(eq(sessions.id, sessionId));
+}
+
+export async function updateSessionDuration(sessionId: number, durationSeconds: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.update(sessions)
+    .set({ durationSeconds, updatedAt: new Date() })
+    .where(eq(sessions.id, sessionId));
+}
+
+// Audio chunk management
+export async function createAudioChunk(data: InsertAudioChunk) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const result = await db.insert(audioChunks).values(data);
+  return result[0].insertId;
+}
+
+export async function getChunksBySessionId(sessionId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  return db.select().from(audioChunks).where(eq(audioChunks.sessionId, sessionId)).orderBy(audioChunks.chunkIndex);
+}
+
+// Transcript management
+export async function createTranscript(data: InsertTranscript) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const result = await db.insert(transcripts).values(data);
+  return result[0].insertId;
+}
+
+export async function getTranscriptsBySessionId(sessionId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  return db.select().from(transcripts).where(eq(transcripts.sessionId, sessionId));
+}
+
+export async function updateTranscriptStatus(transcriptId: number, status: "pending" | "processing" | "completed" | "failed", content?: string, errorMessage?: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const updateData: any = { status, updatedAt: new Date() };
+  if (content !== undefined) updateData.content = content;
+  if (errorMessage !== undefined) updateData.errorMessage = errorMessage;
+  
+  await db.update(transcripts)
+    .set(updateData)
+    .where(eq(transcripts.id, transcriptId));
+}
+
+export async function updateTranscriptJobId(transcriptId: number, jobId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.update(transcripts)
+    .set({ sarvamJobId: jobId, updatedAt: new Date() })
+    .where(eq(transcripts.id, transcriptId));
+}
