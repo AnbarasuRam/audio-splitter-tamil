@@ -38,3 +38,7 @@
 - [x] Improve error handling and error messages
 - [x] Add better logging for debugging
 - [x] Test with real M4A audio files
+
+## Configuration Fixes
+- [x] Fix Vite WebSocket HMR connection warning
+- [x] Configure Vite server for Manus proxy environment
