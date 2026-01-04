@@ -29,5 +29,12 @@
 ## Testing & Deployment
 - [x] Write vitest tests for core functionality
 - [x] Test complete upload-split-transcribe workflow
-- [ ] Create deployment checkpoint
+- [x] Create deployment checkpoint
 - [x] Document API usage and setup instructions
+
+## Bug Fixes
+- [x] Investigate and fix audio splitting failures (0 chunks created)
+- [x] Fix transcription failures showing "Failed" status
+- [x] Improve error handling and error messages
+- [x] Add better logging for debugging
+- [x] Test with real M4A audio files

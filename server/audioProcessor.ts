@@ -106,15 +106,35 @@ export async function splitAudioFile(
           .setDuration(chunkDuration)
           .output(chunkPath)
           .audioCodec('copy') // Copy codec to avoid re-encoding
-          .on('end', () => resolve())
-          .on('error', (err) => reject(err))
+          .on('end', () => {
+            console.log(`[AudioProcessor] Chunk ${i + 1} created successfully`);
+            resolve();
+          })
+          .on('error', (err) => {
+            console.error(`[AudioProcessor] Error creating chunk ${i + 1}:`, err);
+            reject(err);
+          })
+          .on('stderr', (stderrLine) => {
+            console.log(`[AudioProcessor] ffmpeg: ${stderrLine}`);
+          })
           .run();
       });
       
       // Upload chunk to S3
       const chunkBuffer = await fs.promises.readFile(chunkPath);
       const fileKey = `sessions/${sessionId}/chunks/${nanoid()}-${chunkFilename}`;
-      const { url: chunkUrl } = await storagePut(fileKey, chunkBuffer, `audio/${fileExtension.slice(1)}`);
+      
+      // Determine correct MIME type
+      let mimeType = 'audio/mpeg';
+      if (fileExtension === '.m4a') {
+        mimeType = 'audio/mp4';
+      } else if (fileExtension === '.wav') {
+        mimeType = 'audio/wav';
+      } else if (fileExtension === '.mp3') {
+        mimeType = 'audio/mpeg';
+      }
+      
+      const { url: chunkUrl } = await storagePut(fileKey, chunkBuffer, mimeType);
       
       console.log(`[AudioProcessor] Uploaded chunk to ${chunkUrl}`);
       

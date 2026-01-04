@@ -88,12 +88,32 @@ async function processBatchTranscription(sessionId: number, apiKey: string): Pro
         // Update transcript with job ID
         await updateTranscriptJobId(transcript.id, job.jobId);
         
-        // Upload files using file URLs
+        // Download audio file to temp location
+        const fsPromises = await import('fs/promises');
+        const pathModule = await import('path');
+        const tempDir = `/tmp/transcription-${sessionId}-${chunk.id}`;
+        await fsPromises.mkdir(tempDir, { recursive: true });
+        
+        const tempFilePath = pathModule.join(tempDir, chunk.filename);
+        
+        console.log(`[Transcription] Downloading ${chunk.fileUrl} to ${tempFilePath}`);
+        const response = await fetch(chunk.fileUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to download audio: ${response.statusText}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        await fsPromises.writeFile(tempFilePath, Buffer.from(arrayBuffer));
+        
+        // Upload files using local file path
         await job.uploadFiles([
-          chunk.fileUrl,
+          tempFilePath,
         ]);
         
         console.log(`[Transcription] File uploaded for chunk ${chunk.filename}`);
+        
+        // Clean up temp file after upload
+        await fsPromises.rm(tempDir, { recursive: true, force: true });
+        console.log(`[Transcription] Cleaned up temp file for chunk ${chunk.filename}`);
         
         // Start the job
         await job.start();
