@@ -5,13 +5,14 @@ A Streamlit app to split audio files and transcribe Tamil speech using Sarvam AI
 
 import streamlit as st
 import os
+import tempfile
 from pathlib import Path
 from datetime import datetime
 from audio_processor import split_audio_file, get_audio_duration
 from transcriber import transcribe_audio_chunks, TranscriptionResult
 
-# Create output directory for chunks
-OUTPUT_DIR = Path("./output_chunks")
+# Use temporary directory for Streamlit Cloud compatibility
+OUTPUT_DIR = Path(tempfile.gettempdir()) / "streamlit_audio_chunks"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 st.set_page_config(
@@ -147,14 +148,19 @@ if uploaded_file is not None:
                         height=400,
                         label_visibility="collapsed"
                     )
-                    
-                    # Save transcript to file
-                    transcript_file = session_dir / "transcript.txt"
-                    with open(transcript_file, "w", encoding="utf-8") as f:
-                        f.write(combined_transcript)
-                    
-                    st.success(f"💾 Transcript saved to: `{transcript_file}`")
-                    
+
+                    # Store in session history
+                    session_data = {
+                        'name': session_name,
+                        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        'duration': duration,
+                        'chunks_count': len(chunks),
+                        'transcript': combined_transcript
+                    }
+                    st.session_state.transcription_history.append(session_data)
+
+                    st.success("✅ Transcription completed and saved to session history!")
+
                     # Download button
                     st.download_button(
                         label="📥 Download Transcript",
@@ -176,34 +182,27 @@ else:
 
 # Show existing outputs
 st.markdown("---")
-st.subheader("📁 Previous Sessions")
+st.subheader("📁 Session History")
 
-if OUTPUT_DIR.exists():
-    sessions = sorted(OUTPUT_DIR.iterdir(), reverse=True)
-    if sessions:
-        for session in sessions[:5]:  # Show last 5 sessions
-            if session.is_dir():
-                transcript_file = session / "transcript.txt"
-                chunks_dir = session / "chunks"
-                
-                with st.expander(f"📂 {session.name}"):
-                    if transcript_file.exists():
-                        st.write("**Transcript:** ✅ Available")
-                        with open(transcript_file, "r", encoding="utf-8") as f:
-                            content = f.read()
-                        st.download_button(
-                            label="📥 Download",
-                            data=content,
-                            file_name=f"{session.name}_transcript.txt",
-                            mime="text/plain",
-                            key=f"download_{session.name}"
-                        )
-                    if chunks_dir.exists():
-                        chunk_count = len(list(chunks_dir.glob("*.mp3")))
-                        st.write(f"**Audio chunks:** {chunk_count} files")
-                    st.write(f"**Path:** `{session}`")
-    else:
-        st.info("No previous sessions found.")
+# Initialize session history in session state
+if 'transcription_history' not in st.session_state:
+    st.session_state.transcription_history = []
+
+if st.session_state.transcription_history:
+    for i, session in enumerate(reversed(st.session_state.transcription_history[-5:])):  # Show last 5
+        with st.expander(f"📂 {session['name']} - {session['timestamp']}"):
+            st.write(f"**Duration:** {session['duration']:.1f} seconds")
+            st.write(f"**Chunks:** {session['chunks_count']}")
+            st.write("**Transcript:** ✅ Available")
+            st.download_button(
+                label="📥 Download Transcript",
+                data=session['transcript'],
+                file_name=f"{session['name']}_transcript.txt",
+                mime="text/plain",
+                key=f"download_{i}"
+            )
+else:
+    st.info("No transcription sessions yet. Upload an audio file to get started!")
 
 # Footer
 st.markdown("---")
