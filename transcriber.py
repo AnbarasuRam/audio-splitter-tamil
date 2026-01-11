@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from typing import Optional, List
 import requests
-import google.generativeai as genai
+import google.genai as genai
 from pydub import AudioSegment
 
 
@@ -32,14 +32,13 @@ def correct_colloquial_tamil(text: str, api_key: str) -> str:
         Corrected Tamil text
     """
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-pro')
-        
-        prompt = f"""this tamil text has some colloqial tamil in some places. convert them into to proper writing tamil. do not remove any sentences. just correct only the sentences with colloqial tamil
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-exp",
+            contents=f"""this tamil text has some colloqial tamil in some places. convert them into to proper writing tamil. do not remove any sentences. just correct only the sentences with colloqial tamil
 
 Text: {text}"""
-        
-        response = model.generate_content(prompt)
+        )
         return response.text.strip()
     except Exception as e:
         print(f"Error correcting Tamil text: {e}")

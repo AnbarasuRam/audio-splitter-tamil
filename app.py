@@ -5,14 +5,13 @@ A Streamlit app to split audio files and transcribe Tamil speech using an API.
 
 import streamlit as st
 import os
-import tempfile
 from pathlib import Path
 from datetime import datetime
 from audio_processor import split_audio_file, get_audio_duration
 from transcriber import transcribe_audio_chunks, TranscriptionResult
 
-# Use temporary directory for Streamlit Cloud compatibility
-OUTPUT_DIR = Path(tempfile.gettempdir()) / "streamlit_audio_chunks"
+# Use local directory for audio chunks (gitignored)
+OUTPUT_DIR = Path("audio_chunks")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 st.set_page_config(
