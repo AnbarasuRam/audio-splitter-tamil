@@ -14,6 +14,9 @@ build/
 .env.test.local
 .env.production.local
 
+# Virtual environment
+venv/
+
 # Audio chunks
 audio_chunks/
 
