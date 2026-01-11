@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass
 from typing import Optional, List
 import requests
+import google.generativeai as genai
 from pydub import AudioSegment
 
 
@@ -19,9 +20,36 @@ class TranscriptionResult:
     error: Optional[str] = None
 
 
+def correct_colloquial_tamil(text: str, api_key: str) -> str:
+    """
+    Correct colloquial Tamil in the text to proper written Tamil using Gemini AI.
+    
+    Args:
+        text: The Tamil text to correct
+        api_key: Gemini API key
+        
+    Returns:
+        Corrected Tamil text
+    """
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-pro')
+        
+        prompt = f"""this tamil text has some colloqial tamil in some places. convert them into to proper writing tamil. do not remove any sentences. just correct only the sentences with colloqial tamil
+
+Text: {text}"""
+        
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        print(f"Error correcting Tamil text: {e}")
+        return text  # Return original text if correction fails
+
+
 def transcribe_audio_chunks(
     audio_file: str,
     api_key: str,
+    gemini_api_key: str = None,
     language_code: str = "ta-IN",
     model: str = "saarika:v2.5",
     progress_callback=None
@@ -32,6 +60,7 @@ def transcribe_audio_chunks(
     Args:
         audio_file: Path to the audio file
         api_key: API key
+        gemini_api_key: Gemini API key for Tamil text correction (optional)
         language_code: Language code (default: ta-IN for Tamil)
         model: Model to use
         progress_callback: Optional callback function for progress updates
@@ -88,6 +117,10 @@ def transcribe_audio_chunks(
         
         # Combine all transcripts
         combined_transcript = " ".join(all_transcripts)
+        
+        # Correct colloquial Tamil if Gemini API key is provided
+        if gemini_api_key:
+            combined_transcript = correct_colloquial_tamil(combined_transcript, gemini_api_key)
         
         return TranscriptionResult(
             transcript=combined_transcript
