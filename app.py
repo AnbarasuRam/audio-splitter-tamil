@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from datetime import datetime
 from audio_processor import split_audio_file, get_audio_duration
-from transcriber import transcribe_audio_chunks, TranscriptionResult
+from transcriber import transcribe_audio_chunks, transcribe_audio_batch, TranscriptionResult
 
 # Use local directory for audio chunks (gitignored)
 OUTPUT_DIR = Path("audio_chunks")
@@ -56,14 +56,15 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("""
     ### How it works
-    1. Upload your audio file
-    2. Audio is split into chunks
-    3. Each chunk is transcribed using Sarvam AI
+    1. **Smart API Selection**: Automatically chooses Batch API for long audio (>30s) or Chunking API for short audio
+    2. Upload your audio file
+    3. Audio is processed using the optimal method
     4. Download the complete transcript
     
     ### Supported formats
     - MP3, M4A, WAV
     - Tamil language (ta-IN)
+    - Up to several hours of audio with Batch API
     """)
 
 # Main content
@@ -104,50 +105,90 @@ if uploaded_file is not None:
                 duration = get_audio_duration(str(input_file))
                 st.info(f"📊 Audio duration: **{duration // 60:.0f} min {duration % 60:.0f} sec**")
                 
-                # Split audio
-                st.subheader("📂 Step 1: Splitting Audio")
-                progress_split = st.progress(0, text="Splitting audio into chunks...")
+                # Decide between batch API (>30s) or chunking (<=30s)
+                use_batch_api = duration > 30
                 
-                chunk_files = split_audio_file(
-                    str(input_file),
-                    str(chunks_dir),
-                    chunk_duration_minutes=chunk_minutes
-                )
-                
-                progress_split.progress(100, text=f"✅ Created {len(chunk_files)} chunk(s)")
-                
-                # Display chunks
-                with st.expander(f"📁 View {len(chunk_files)} audio chunks (saved to disk)"):
-                    for i, chunk in enumerate(chunk_files):
-                        chunk_path = Path(chunk)
-                        st.write(f"**Chunk {i+1}:** `{chunk_path.name}`")
-                
-                # Transcribe
-                st.subheader("📝 Step 2: Transcribing Audio")
-                
-                all_transcripts = []
-                
-                for i, chunk_file in enumerate(chunk_files):
-                    progress_text = f"Transcribing chunk {i+1}/{len(chunk_files)}..."
-                    st.text(progress_text)
+                if use_batch_api:
+                    st.info("🔄 Using **Batch API** for long audio (>30 seconds)")
                     
-                    with st.spinner(progress_text):
-                        result = transcribe_audio_chunks(chunk_file, api_key, gemini_api_key)
+                    # Transcribe using batch API
+                    st.subheader("📝 Step 1: Batch Transcription")
+                    
+                    with st.spinner("Processing audio with batch API (this may take several minutes)..."):
+                        result = transcribe_audio_batch(
+                            str(input_file), 
+                            api_key, 
+                            gemini_api_key,
+                            output_dir=str(session_dir)
+                        )
                     
                     if result.error:
-                        st.warning(f"⚠️ Chunk {i+1} error: {result.error}")
-                        all_transcripts.append(f"[Error in chunk {i+1}: {result.error}]")
+                        st.error(f"❌ Batch transcription failed: {result.error}")
+                        combined_transcript = ""
                     else:
-                        all_transcripts.append(result.transcript)
-                        st.success(f"✅ Chunk {i+1} transcribed ({len(result.transcript)} chars)")
-                
-                # Combine transcripts
-                st.subheader("📄 Full Transcript")
-                
-                combined_transcript = "\n\n".join([
-                    f"--- Chunk {i+1} ---\n{t}" 
-                    for i, t in enumerate(all_transcripts)
-                ])
+                        combined_transcript = result.transcript
+                        st.success(f"✅ Transcription completed ({len(combined_transcript)} characters)")
+                        
+                        # Store transcript in session directory
+                        transcript_file = session_dir / "transcript.txt"
+                        with open(transcript_file, 'w', encoding='utf-8') as f:
+                            f.write(combined_transcript)
+                        
+                else:
+                    st.info("🔄 Using **Chunking API** for short audio (≤30 seconds)")
+                    
+                    # Split audio
+                    st.subheader("📂 Step 1: Splitting Audio")
+                    progress_split = st.progress(0, text="Splitting audio into chunks...")
+                    
+                    chunk_files = split_audio_file(
+                        str(input_file),
+                        str(chunks_dir),
+                        chunk_duration_minutes=chunk_minutes
+                    )
+                    
+                    progress_split.progress(100, text=f"✅ Created {len(chunk_files)} chunk(s)")
+                    
+                    # Display chunks
+                    with st.expander(f"📁 View {len(chunk_files)} audio chunks (saved to disk)"):
+                        for i, chunk in enumerate(chunk_files):
+                            chunk_path = Path(chunk)
+                            st.write(f"**Chunk {i+1}:** `{chunk_path.name}`")
+                    
+                    # Transcribe
+                    st.subheader("📝 Step 2: Transcribing Audio")
+                    
+                    all_transcripts = []
+                    
+                    for i, chunk_file in enumerate(chunk_files):
+                        progress_text = f"Transcribing chunk {i+1}/{len(chunk_files)}..."
+                        st.text(progress_text)
+                        
+                        with st.spinner(progress_text):
+                            result = transcribe_audio_chunks(chunk_file, api_key, gemini_api_key)
+                        
+                        if result.error:
+                            st.warning(f"⚠️ Chunk {i+1} error: {result.error}")
+                            all_transcripts.append(f"[Error in chunk {i+1}: {result.error}]")
+                        else:
+                            all_transcripts.append(result.transcript)
+                            st.success(f"✅ Chunk {i+1} transcribed ({len(result.transcript)} chars)")
+                            
+                            # Save individual chunk transcript
+                            chunk_transcript_file = chunks_dir / f"chunk_{i+1}_transcript.txt"
+                            with open(chunk_transcript_file, 'w', encoding='utf-8') as f:
+                                f.write(result.transcript)
+                    
+                    # Combine transcripts
+                    combined_transcript = "\n\n".join([
+                        f"--- Chunk {i+1} ---\n{t}" 
+                        for i, t in enumerate(all_transcripts)
+                    ])
+                    
+                    # Save combined transcript
+                    transcript_file = session_dir / "transcript.txt"
+                    with open(transcript_file, 'w', encoding='utf-8') as f:
+                        f.write(combined_transcript)
                 
                 if combined_transcript:
                     # Display transcript
@@ -163,7 +204,8 @@ if uploaded_file is not None:
                         'name': session_name,
                         'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         'duration': duration,
-                        'chunks_count': len(chunks),
+                        'method': 'batch' if use_batch_api else 'chunking',
+                        'chunks_count': 1 if use_batch_api else len(chunk_files),
                         'transcript': combined_transcript
                     }
                     st.session_state.transcription_history.append(session_data)
@@ -201,6 +243,7 @@ if st.session_state.transcription_history:
     for i, session in enumerate(reversed(st.session_state.transcription_history[-5:])):  # Show last 5
         with st.expander(f"📂 {session['name']} - {session['timestamp']}"):
             st.write(f"**Duration:** {session['duration']:.1f} seconds")
+            st.write(f"**Method:** {session.get('method', 'chunking').title()}")
             st.write(f"**Chunks:** {session['chunks_count']}")
             st.write("**Transcript:** ✅ Available")
             st.download_button(

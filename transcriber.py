@@ -10,6 +10,7 @@ from typing import Optional, List
 import requests
 import google.genai as genai
 from pydub import AudioSegment
+from sarvamai import SarvamAI
 
 
 @dataclass
@@ -43,6 +44,136 @@ Text: {text}"""
     except Exception as e:
         print(f"Error correcting Tamil text: {e}")
         return text  # Return original text if correction fails
+
+
+def transcribe_audio_batch(
+    audio_file: str,
+    api_key: str,
+    gemini_api_key: str = None,
+    output_dir: str = None,
+    language_code: str = "ta-IN",
+    model: str = "saarika:v2.5",
+    progress_callback=None
+) -> TranscriptionResult:
+    """
+    Transcribe an audio file using SarvamAI batch API (for files > 30 seconds).
+    
+    Args:
+        audio_file: Path to the audio file
+        api_key: SarvamAI API key
+        gemini_api_key: Gemini API key for Tamil text correction (optional)
+        output_dir: Directory to store individual chunk transcriptions
+        language_code: Language code (default: ta-IN for Tamil)
+        model: Model to use
+        progress_callback: Optional callback function for progress updates
+        
+    Returns:
+        TranscriptionResult with combined transcript
+    """
+    try:
+        if progress_callback:
+            progress_callback("Initializing batch job...")
+            
+        client = SarvamAI(api_subscription_key=api_key)
+        
+        # Create batch job
+        job = client.speech_to_text_job.create_job(
+            language_code=language_code,
+            model=model,
+            with_timestamps=True,
+            with_diarization=True,
+            num_speakers=2
+        )
+        
+        # Upload file
+        if progress_callback:
+            progress_callback("Uploading audio file...")
+        job.upload_files(file_paths=[audio_file])
+        
+        # Start job
+        if progress_callback:
+            progress_callback("Starting transcription job...")
+        job.start()
+        
+        # Wait for completion
+        if progress_callback:
+            progress_callback("Processing audio (this may take several minutes)...")
+        final_status = job.wait_until_complete()
+        
+        if job.is_failed():
+            return TranscriptionResult(
+                transcript="",
+                error="Batch transcription job failed."
+            )
+        
+        # Download outputs
+        if progress_callback:
+            progress_callback("Downloading results...")
+        
+        if output_dir:
+            job.download_outputs(output_dir=output_dir)
+        
+        # Get the transcript from the job result
+        try:
+            # Get file results which should contain the transcription
+            file_results = job.get_file_results()
+            
+            if file_results and len(file_results) > 0:
+                # Assuming the first result contains the transcript
+                result_data = file_results[0]
+                
+                # Extract transcript from the result
+                if hasattr(result_data, 'transcript'):
+                    transcript = result_data.transcript
+                elif isinstance(result_data, dict) and 'transcript' in result_data:
+                    transcript = result_data['transcript']
+                elif hasattr(result_data, 'text'):
+                    transcript = result_data.text
+                else:
+                    # Try to get the transcript from the downloaded files
+                    import glob
+                    output_files = glob.glob(os.path.join(output_dir, "*.json")) if output_dir else []
+                    if output_files:
+                        import json
+                        with open(output_files[0], 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            transcript = data.get('transcript', str(data))
+                    else:
+                        transcript = str(file_results)
+            else:
+                return TranscriptionResult(
+                    transcript="",
+                    error="No transcription results found in batch job output."
+                )
+                
+        except Exception as e:
+            return TranscriptionResult(
+                transcript="",
+                error=f"Failed to extract transcript from batch job: {str(e)}"
+            )
+        
+        # Correct colloquial Tamil if Gemini API key is provided
+        if gemini_api_key and transcript:
+            if progress_callback:
+                progress_callback("Correcting Tamil text...")
+            transcript = correct_colloquial_tamil(transcript, gemini_api_key)
+        
+        # Save individual chunk transcriptions if output_dir is provided
+        if output_dir and transcript:
+            try:
+                transcript_file = os.path.join(output_dir, "batch_transcript.txt")
+                with open(transcript_file, 'w', encoding='utf-8') as f:
+                    f.write(transcript)
+            except Exception as e:
+                print(f"Warning: Could not save transcript to file: {e}")
+        
+        return TranscriptionResult(transcript=transcript)
+        
+    except Exception as e:
+        return TranscriptionResult(
+            transcript="",
+            error=f"Batch transcription failed: {str(e)}"
+        )
 
 
 def transcribe_audio_chunks(
