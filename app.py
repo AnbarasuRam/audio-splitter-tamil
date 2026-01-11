@@ -1,6 +1,6 @@
 """
 Tamil Audio Splitter & Transcriber
-A Streamlit app to split audio files and transcribe Tamil speech using Sarvam AI.
+A Streamlit app to split audio files and transcribe Tamil speech using an API.
 """
 
 import streamlit as st
@@ -30,11 +30,17 @@ The audio will be automatically split into manageable chunks for processing.
 # Sidebar for API key
 with st.sidebar:
     st.header("⚙️ Settings")
-    api_key = st.text_input(
-        "Sarvam AI API Key",
-        type="password",
-        help="Get your API key from https://dashboard.sarvam.ai"
-    )
+    
+    # Check for API key in environment
+    api_key = os.getenv('API_KEY')
+    if not api_key:
+        api_key = st.text_input(
+            "API Key",
+            type="password",
+            help="Get your API key from the service provider, or set API_KEY environment variable"
+        )
+    else:
+        st.success("API Key loaded from environment variable")
     
     chunk_minutes = st.slider(
         "Chunk size (minutes)",

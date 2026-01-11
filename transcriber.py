@@ -1,5 +1,5 @@
 """
-Transcription service using Sarvam AI API for Tamil speech-to-text.
+Transcription service using API for Tamil speech-to-text.
 Splits audio into 30-second chunks for the real-time API.
 """
 
@@ -31,7 +31,7 @@ def transcribe_audio_chunks(
     
     Args:
         audio_file: Path to the audio file
-        api_key: Sarvam AI API key
+        api_key: API key
         language_code: Language code (default: ta-IN for Tamil)
         model: Model to use
         progress_callback: Optional callback function for progress updates
