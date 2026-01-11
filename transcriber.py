@@ -56,7 +56,8 @@ def transcribe_audio_batch(
     progress_callback=None
 ) -> TranscriptionResult:
     """
-    Transcribe an audio file using SarvamAI batch API (for files > 30 seconds).
+    Transcribe an audio file using SarvamAI batch API with 15-minute chunking.
+    Files longer than 15 minutes are split into chunks for better reliability.
     
     Args:
         audio_file: Path to the audio file
@@ -70,6 +71,48 @@ def transcribe_audio_batch(
     Returns:
         TranscriptionResult with combined transcript
     """
+    try:
+        # Load audio file to check duration
+        if progress_callback:
+            progress_callback("Loading audio file...")
+            
+        audio = AudioSegment.from_file(audio_file)
+        duration_sec = len(audio) / 1000.0
+        max_chunk_duration_sec = 15 * 60  # 15 minutes in seconds
+        
+        if duration_sec <= max_chunk_duration_sec:
+            # File is short enough, process as single batch job
+            return _process_single_batch_job(
+                audio_file, api_key, gemini_api_key, output_dir, 
+                language_code, model, progress_callback
+            )
+        else:
+            # File is too long, split into 15-minute chunks
+            if progress_callback:
+                progress_callback(f"Audio is {duration_sec/60:.1f} minutes long. Splitting into 15-minute chunks...")
+            
+            return _process_batch_chunks(
+                audio, duration_sec, max_chunk_duration_sec, audio_file,
+                api_key, gemini_api_key, output_dir, language_code, model, progress_callback
+            )
+            
+    except Exception as e:
+        return TranscriptionResult(
+            transcript="",
+            error=f"Batch transcription failed: {str(e)}"
+        )
+
+
+def _process_single_batch_job(
+    audio_file: str,
+    api_key: str,
+    gemini_api_key: str,
+    output_dir: str,
+    language_code: str,
+    model: str,
+    progress_callback
+) -> TranscriptionResult:
+    """Process a single audio file with batch API."""
     try:
         if progress_callback:
             progress_callback("Initializing batch job...")
@@ -114,42 +157,12 @@ def transcribe_audio_batch(
             job.download_outputs(output_dir=output_dir)
         
         # Get the transcript from the job result
-        try:
-            # Get file results which should contain the transcription
-            file_results = job.get_file_results()
-            
-            if file_results and len(file_results) > 0:
-                # Assuming the first result contains the transcript
-                result_data = file_results[0]
-                
-                # Extract transcript from the result
-                if hasattr(result_data, 'transcript'):
-                    transcript = result_data.transcript
-                elif isinstance(result_data, dict) and 'transcript' in result_data:
-                    transcript = result_data['transcript']
-                elif hasattr(result_data, 'text'):
-                    transcript = result_data.text
-                else:
-                    # Try to get the transcript from the downloaded files
-                    import glob
-                    output_files = glob.glob(os.path.join(output_dir, "*.json")) if output_dir else []
-                    if output_files:
-                        import json
-                        with open(output_files[0], 'r', encoding='utf-8') as f:
-                            data = json.load(f)
-                            transcript = data.get('transcript', str(data))
-                    else:
-                        transcript = str(file_results)
-            else:
-                return TranscriptionResult(
-                    transcript="",
-                    error="No transcription results found in batch job output."
-                )
-                
-        except Exception as e:
+        transcript = _extract_transcript_from_job(job, output_dir)
+        
+        if not transcript:
             return TranscriptionResult(
                 transcript="",
-                error=f"Failed to extract transcript from batch job: {str(e)}"
+                error="No transcription results found in batch job output."
             )
         
         # Correct colloquial Tamil if Gemini API key is provided
@@ -158,7 +171,7 @@ def transcribe_audio_batch(
                 progress_callback("Correcting Tamil text...")
             transcript = correct_colloquial_tamil(transcript, gemini_api_key)
         
-        # Save individual chunk transcriptions if output_dir is provided
+        # Save transcript if output_dir is provided
         if output_dir and transcript:
             try:
                 transcript_file = os.path.join(output_dir, "batch_transcript.txt")
@@ -172,8 +185,135 @@ def transcribe_audio_batch(
     except Exception as e:
         return TranscriptionResult(
             transcript="",
-            error=f"Batch transcription failed: {str(e)}"
+            error=f"Single batch job failed: {str(e)}"
         )
+
+
+def _process_batch_chunks(
+    audio: AudioSegment,
+    total_duration_sec: float,
+    max_chunk_duration_sec: float,
+    original_file: str,
+    api_key: str,
+    gemini_api_key: str,
+    output_dir: str,
+    language_code: str,
+    model: str,
+    progress_callback
+) -> TranscriptionResult:
+    """Process audio in 15-minute chunks using batch API."""
+    try:
+        chunk_duration_ms = max_chunk_duration_sec * 1000  # Convert to milliseconds
+        num_chunks = int((len(audio) + chunk_duration_ms - 1) / chunk_duration_ms)
+        
+        if progress_callback:
+            progress_callback(f"Splitting into {num_chunks} chunks of ~15 minutes each")
+        
+        all_transcripts = []
+        temp_files = []
+        
+        for i in range(num_chunks):
+            start_ms = i * chunk_duration_ms
+            end_ms = min((i + 1) * chunk_duration_ms, len(audio))
+            chunk = audio[start_ms:end_ms]
+            
+            # Export chunk to temp file
+            temp_chunk_path = f"/tmp/batch_chunk_{i}.mp3"
+            chunk.export(temp_chunk_path, format="mp3", bitrate="128k")
+            temp_files.append(temp_chunk_path)
+            
+            # Process this chunk
+            chunk_progress_msg = f"Processing chunk {i+1}/{num_chunks}..."
+            if progress_callback:
+                progress_callback(chunk_progress_msg)
+            
+            chunk_result = _process_single_batch_job(
+                temp_chunk_path, api_key, None,  # Don't correct individual chunks yet
+                output_dir, language_code, model, None  # No progress callback for individual chunks
+            )
+            
+            if chunk_result.error:
+                print(f"Warning: Chunk {i+1} failed: {chunk_result.error}")
+                all_transcripts.append(f"[Error in chunk {i+1}: {chunk_result.error}]")
+            else:
+                all_transcripts.append(chunk_result.transcript)
+                
+                # Save individual chunk transcript
+                if output_dir:
+                    try:
+                        chunk_transcript_file = os.path.join(output_dir, f"batch_chunk_{i+1}_transcript.txt")
+                        with open(chunk_transcript_file, 'w', encoding='utf-8') as f:
+                            f.write(chunk_result.transcript)
+                    except Exception as e:
+                        print(f"Warning: Could not save chunk {i+1} transcript: {e}")
+            
+            # Clean up temp file
+            try:
+                os.remove(temp_chunk_path)
+            except:
+                pass
+        
+        # Combine all transcripts
+        combined_transcript = " ".join(all_transcripts)
+        
+        # Correct colloquial Tamil on the combined result if Gemini API key is provided
+        if gemini_api_key and combined_transcript:
+            if progress_callback:
+                progress_callback("Correcting Tamil text...")
+            combined_transcript = correct_colloquial_tamil(combined_transcript, gemini_api_key)
+        
+        # Save combined transcript
+        if output_dir and combined_transcript:
+            try:
+                combined_transcript_file = os.path.join(output_dir, "batch_combined_transcript.txt")
+                with open(combined_transcript_file, 'w', encoding='utf-8') as f:
+                    f.write(combined_transcript)
+            except Exception as e:
+                print(f"Warning: Could not save combined transcript: {e}")
+        
+        return TranscriptionResult(transcript=combined_transcript)
+        
+    except Exception as e:
+        return TranscriptionResult(
+            transcript="",
+            error=f"Batch chunk processing failed: {str(e)}"
+        )
+
+
+def _extract_transcript_from_job(job, output_dir: str = None) -> str:
+    """Extract transcript from a completed batch job."""
+    try:
+        # Get file results which should contain the transcription
+        file_results = job.get_file_results()
+        
+        if file_results and len(file_results) > 0:
+            # Assuming the first result contains the transcript
+            result_data = file_results[0]
+            
+            # Extract transcript from the result
+            if hasattr(result_data, 'transcript'):
+                return result_data.transcript
+            elif isinstance(result_data, dict) and 'transcript' in result_data:
+                return result_data['transcript']
+            elif hasattr(result_data, 'text'):
+                return result_data.text
+            else:
+                # Try to get the transcript from the downloaded files
+                import glob
+                output_files = glob.glob(os.path.join(output_dir, "*.json")) if output_dir else []
+                if output_files:
+                    import json
+                    with open(output_files[0], 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        return data.get('transcript', str(data))
+                else:
+                    return str(file_results)
+        else:
+            return ""
+                
+    except Exception as e:
+        print(f"Error extracting transcript: {e}")
+        return ""
 
 
 def transcribe_audio_chunks(

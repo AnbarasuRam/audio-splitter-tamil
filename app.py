@@ -57,14 +57,15 @@ with st.sidebar:
     st.markdown("""
     ### How it works
     1. **Smart API Selection**: Automatically chooses Batch API for long audio (>30s) or Chunking API for short audio
-    2. Upload your audio file
-    3. Audio is processed using the optimal method
-    4. Download the complete transcript
+    2. **Batch Processing**: Long files are split into 15-minute chunks for optimal processing and to avoid timeouts
+    3. Upload your audio file
+    4. Audio is processed using the optimal method
+    5. Download the complete transcript
     
     ### Supported formats
     - MP3, M4A, WAV
     - Tamil language (ta-IN)
-    - Up to several hours of audio with Batch API
+    - Up to several hours of audio with Batch API chunking
     """)
 
 # Main content
@@ -109,7 +110,7 @@ if uploaded_file is not None:
                 use_batch_api = duration > 30
                 
                 if use_batch_api:
-                    st.info("🔄 Using **Batch API** for long audio (>30 seconds)")
+                    st.info("🔄 Using **Batch API** for long audio (>30 seconds) with 15-minute chunking")
                     
                     # Transcribe using batch API
                     st.subheader("📝 Step 1: Batch Transcription")
@@ -204,8 +205,8 @@ if uploaded_file is not None:
                         'name': session_name,
                         'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         'duration': duration,
-                        'method': 'batch' if use_batch_api else 'chunking',
-                        'chunks_count': 1 if use_batch_api else len(chunk_files),
+                        'method': 'batch (15min chunks)' if use_batch_api else 'chunking',
+                        'chunks_count': max(1, int(duration / (15 * 60))) if use_batch_api else len(chunk_files),
                         'transcript': combined_transcript
                     }
                     st.session_state.transcription_history.append(session_data)
